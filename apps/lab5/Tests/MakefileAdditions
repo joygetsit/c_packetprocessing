@@ -1,0 +1,17 @@
+#
+# MAC Timestamps
+#
+$(eval $(call micro_c.compile_with_rtl,timestamp_obj,mac_timestamp.c))
+$(eval $(call micro_c.add_fw_libs,timestamp_obj,nfp std))
+$(eval $(call fw.add_obj,wire,timestamp_obj,i34.me1))
+
+#
+# Test code for setting ME Timestamps
+#
+$(eval $(call micro_c.compile_with_rtl,metimestamp_obj,set_me_timestamp.c))
+$(eval $(call micro_c.add_fw_libs,metimestamp_obj,nfp std))
+$(eval $(call fw.add_obj,wire,metimestamp_obj,i34.me2))
+
+$(eval $(call fw.add_obj,wire,blm_obj,i48.me0))
+$(eval $(call fw.link_with_rtsyms,wire))
+$(eval $(call fw.add_ppc,wire,i8,$(PICO_CODE)))
