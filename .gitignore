@@ -6,3 +6,8 @@
 *.list
 *.obj
 *.map
+
+.idea/
+/apps/lab5/1
+apps/lab5/wire_main3.c
+

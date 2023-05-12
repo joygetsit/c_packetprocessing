@@ -31,8 +31,18 @@
 
 #include <pkt/pkt.h>
 #include <net/eth.h>
+
+#include <net/ip.h>
+#include <net/udp.h>
+
 #include <nfp/mem_atomic.h>
 #include <nfp/mem_bulk.h>
+
+#include <nfp6000/nfp_nbi_tm.h>
+#include <nfp/tmq.h>
+#include <nfp/tm_config.h>
+//#include <nfp/mac_time.h>
+#include <nfp/me.h>
 
 /*
  * Mapping between channel and TM queue
@@ -66,9 +76,12 @@ __volatile __export __emem uint32_t debug_idx;
 /* Counters */
 struct counters {
     uint64_t no_vlan;
-    uint64_t vlan_2;
-    uint64_t vlan_3;
-    uint64_t vlan_other;
+    uint64_t ip_packets;
+    uint64_t udp_packets;
+    uint32_t vlan_2;
+    uint32_t vlan_3;
+    uint32_t vlan_other;
+    uint32_t extra;
 };
 
 struct statistics {
@@ -78,7 +91,12 @@ struct statistics {
     uint64_t vlan_other;
 };
 
-// Add metadata structure to be used for debugging with nfp-rtsym
+
+
+/**
+ * Joy's custom metadata structure used for debugging with nfp-rtsym
+ */
+
 struct CustomData {
     uint8_t custom1;
     uint8_t custom2;
@@ -89,13 +107,27 @@ struct CustomData {
     uint64_t custom7;
 };
 
+__packed struct metadata {
+    uint64_t timestamp1;                      /** timestamp1 */
+    uint64_t timestamp2;                      /** timestamp */
+    uint64_t timestamp3;                      /** timestamp */
+    uint64_t timestamp4;                      /** timestamp */
+    uint64_t timestamp5;                      /** timestamp */    
+};
+
+struct Timestamp_Store {
+    uint64_t ts1;
+    uint64_t ts2;
+    uint64_t ts3;
+    uint64_t debug_value;
+};
+
 // __declspec(shared ctm) is one copy shared by all threads in an ME, in CTM
 // __declspec(shared export ctm) is one copy shared by all MEs in an island in CTM (CTM default scope for 'export' of island)
 // __declspec(shared export imem) is one copy shared by all MEs on the chip in IMU (IMU default scope for 'export' of global)
 __declspec(shared scope(island) export cls) struct statistics stats;
 __declspec(shared scope(global) export imem) struct counters counters;
 
-// Add one instance of the above defined metadata structure to imem memory
 __declspec(shared scope(global) export imem) struct CustomData customData;
 
 
@@ -105,6 +137,9 @@ struct pkt_hdr {
         uint32_t mac_prepend;
     };
     struct eth_vlan_hdr pkt;
+    struct metadata metadata_m;
+    struct ip4_hdr ip_pkt;
+    struct udp_hdr udp_pkt;
 };
 
 struct pkt_rxed {
@@ -159,8 +194,7 @@ receive_packet( struct pkt_rxed *pkt_rxed,
     mem_read32(&(pkt_rxed_in.pkt_hdr), pkt_hdr, sizeof(pkt_rxed_in.pkt_hdr));
     pkt_rxed->pkt_hdr = pkt_rxed_in.pkt_hdr;
 
-    return pkt_hdr;
-}
+    return pkt_hdr;}
 
 void
 rewrite_packet( struct pkt_rxed *pkt_rxed,
@@ -168,18 +202,50 @@ rewrite_packet( struct pkt_rxed *pkt_rxed,
 {
     int vlan;
 
+    uint64_t test_me_timestamp = 0;
+    static uint64_t QueueLevel0_0 = 0;
+    uint64_t QueueLevel1_1 = 0;
+
     vlan = 0;
     if (pkt_rxed->pkt_hdr.pkt.tpid==0x8100) {
         vlan = pkt_rxed->pkt_hdr.pkt.tci & 0xfff;
-
-        // Assign Priority according to VLAN ID, in Netronome switch.
+        // if ((vlan==2) || (vlan==3)) {
+        //     // pkt_hdr->pkt.tci = pkt_rxed->pkt_hdr.pkt.tci ^ 1;
+        //     pkt_hdr->pkt.tci = 0x202f;
+        // }
         if (vlan==2) {
             pkt_hdr->pkt.tci = pkt_hdr->pkt.tci & 0x1fff; // Priority 0
+            pkt_hdr->pkt.tci = pkt_hdr->pkt.tci; // + 5 (For debug);
+            //****** Checking static variable ******//
+            // QueueLevel0_0 = 0;
+            QueueLevel0_0 += local_csr_read(local_csr_mailbox_0);
+            QueueLevel1_1 += local_csr_read(local_csr_mailbox_1);
+            mem_add64_imm(QueueLevel0_0, &customData.custom5);
+            mem_add64_imm(QueueLevel1_1, &customData.custom7);
+            //***********************//
         } else if (vlan==3) {
             pkt_hdr->pkt.tci = (pkt_hdr->pkt.tci & 0x1fff) | (1 << 13); // Priority 1
+            pkt_hdr->pkt.tci = pkt_hdr->pkt.tci + 15;        
         } else if (vlan==4) {
             pkt_hdr->pkt.tci = (pkt_hdr->pkt.tci & 0x1fff) | (1 << 14); // Priority 2
         }
+    }
+
+    /***
+    * Joy - Add NFP ME to custom metadata header in packet
+    ***/
+    test_me_timestamp = me_tsc_read(); // 0xf1f1f9f8f7f6f5f2; //
+    // mem_write_atomic(&QueueLevel0, &customData_2.qlevel_0, sizeof(QueueLevel0));
+    // test_me_timestamp = 0xf6f9f7f5f3f1; // local_csr_read(local_csr_mailbox_1);
+    if ((pkt_rxed->pkt_hdr.pkt.tci & 0xfff)==2) {
+        pkt_hdr->metadata_m.timestamp3 = test_me_timestamp; //258; //test_me_timestamp; //me_tsc_read();
+        pkt_hdr->metadata_m.timestamp4 = test_me_timestamp;
+        pkt_hdr->metadata_m.timestamp5 = test_me_timestamp;
+        // test_me_timestamp = me_tsc_read();
+        // pkt_hdr->metadata_m.timestamp3 = test_me_timestamp; //me_tsc_read();
+        // pkt_hdr->metadata_m.timestamp4 = test_me_timestamp;
+    } else if ((pkt_rxed->pkt_hdr.pkt.tci & 0xfff)==3) {
+        pkt_hdr->pkt.tci = pkt_hdr->pkt.tci + 15;
     }
 }
 
@@ -191,11 +257,12 @@ count_packet( struct pkt_rxed *pkt_rxed,
         mem_incr64(&counters.no_vlan);
     } else {
         if ((pkt_rxed->pkt_hdr.pkt.tci & 0xfff)==2) {
-            mem_incr64(&counters.vlan_2);
+            mem_incr32(&counters.vlan_2);
+            mem_add32_imm(PORT_TO_CHANNEL(pkt_rxed->nbi_meta.port), &customData.custom1); // Add Port Number
         } else if ((pkt_rxed->pkt_hdr.pkt.tci & 0xfff)==3) {
-            mem_incr64(&counters.vlan_3);
+            mem_incr32(&counters.vlan_3);
         } else {
-            mem_incr64(&counters.vlan_other);
+            mem_incr32(&counters.vlan_other);
         }
     }
 }
@@ -210,8 +277,41 @@ send_packet( struct nbi_meta_catamaran *nbi_meta,
     __mem40 char *pbuf;
     uint16_t q_dst = 0;
     uint8_t channel_dst = 0;
+
+    uint32_t Queue0 = 5;
+    uint32_t Queue1 = 1;
+    uint32_t Queue2 = 24;
+    __xread struct nfp_nbi_tm_queue_status QueueDataStructure[3];
+    __xwrite uint64_t QueueLevel0;
+    __xwrite uint64_t QueueLevel1;
+    // uint64_t QueueLevel0_0 = 0;
+    // uint64_t QueueLevel1_1 = 0;
+    uint64_t counter_debug = 0;
+
+    /*******-------------------------------------------------------------*****/
+    /** TAS-CT code */
+    // struct Timestamp_Store RegTimestamp1;
+
+    // uint32_t Count_for_80microseconds = 3165;
+    // uint32_t Count_for_100milliseconds = 3956250;
+
+    // RegTimestamp1.ts1 = me_tsc_read();
+    // RegTimestamp1.debug_value = RegTimestamp1.ts1 % (Count_for_100milliseconds*4) ;
+    // Queue0 = local_csr_read(local_csr_mailbox_0);
+    // if (RegTimestamp1.debug_value < Count_for_100milliseconds*2/5) {
+    //     RegTimestamp1.debug_value = 65;
+    //     Queue1 = local_csr_read(local_csr_mailbox_1);
+    //     Queue1 = 16;
+    //     RegTimestamp1.ts2 = me_tsc_read();
+    //     RegTimestamp1.ts3 = me_tsc_read();
+    // } else {
+    //     RegTimestamp1.debug_value = 3020;
+    //     Queue1 = local_csr_read(local_csr_mailbox_2);
+    // }
+    /*******-------------------------------------------------------------*****/
+
     /* Write the MAC egress CMD and adjust offset and len accordingly */
-    pkt_off = PKT_NBI_OFFSET + 2 * MAC_PREPEND_BYTES;
+    pkt_off = PKT_NBI_OFFSET + 2*MAC_PREPEND_BYTES;
     island = nbi_meta->pkt_info.isl;
     pnum   = nbi_meta->pkt_info.pnum;
     pbuf   = pkt_ctm_ptr40(island, pnum, 0);
@@ -219,21 +319,33 @@ send_packet( struct nbi_meta_catamaran *nbi_meta,
 
     channel_dst = nbi_meta->port;
 
-    /** Select 1 of the below **/
     /* Set egress tm queue.
      * Set tm_que to mirror pkt to port on which in ingressed. */
-//    q_dst = PORT_TO_CHANNEL(channel_dst);
+    /** Select 1 of the options below **/
+    /*******-------------------------------------------------------------*****/
 
-    // Set egress queue to the other port
+    // q_dst = PORT_TO_CHANNEL(channel_dst);
+    // q_dst = 0;
+    /*** Set egress queue to the other port ***/
     q_dst = PORT_TO_CHANNEL(channel_dst) ? 0 : 128;
 
-    /** Select egress queue/channel to the other port such that ping and arp etc. can flow. **/
+    /*** Select egress queue/channel to the other port such that ping and arp etc. can flow. ***/
     /** Ping and arp use the 4th queue of the channel, we don't know the reason yet **/
-//     if (channel_dst == 3 || channel_dst == 19) {
-//         channel_dst = (channel_dst==19) ? 3 : 19;
-//     } else {
-//         channel_dst = (channel_dst==16) ? 0 : 16;
-//     }
+    // if (channel_dst == 3 || channel_dst == 19) {
+    //     channel_dst = (channel_dst==19) ? 3 : 19;
+    // } else {
+    //     channel_dst = (channel_dst==16) ? 0 : 16;
+    // }
+    // q_dst = PORT_TO_CHANNEL(channel_dst);
+
+    // if ((pkt_hdr->pkt.tci & 0xfff)==2) {
+    //     q_dst = Queue0;
+    // } else if ((pkt_hdr->pkt.tci & 0xfff)==3) {
+    //     q_dst = Queue1;
+    // } else {
+    //     q_dst = Queue2;
+    // }
+    /*******-------------------------------------------------------------*****/
 
     pkt_mac_egress_cmd_write(pbuf, pkt_off, 1, 1); // Write data to make the packet MAC egress generate L3 and L4 checksums
 
@@ -247,7 +359,33 @@ send_packet( struct nbi_meta_catamaran *nbi_meta,
                  nbi_meta->seqr,
                  nbi_meta->seq,
                  PKT_CTM_SIZE_256);
+
+    /*******-------------------------------------------------------------*****/
+    /** Queue Occupancy Level function **/
+    // tmq_status_read(&QueueDataStructure[0], 0, Queue0, 1);
+    // QueueLevel0 = QueueDataStructure[0].queuelevel;
+    // QueueLevel0_0 = QueueDataStructure[0].queuelevel;
+    // // mem_write_atomic(&QueueLevel0, &customData.custom5, sizeof(QueueLevel0));
+    // mem_add64_imm(QueueLevel0_0, &customData.custom5);
+
+    // tmq_status_read(&QueueDataStructure[1], 0, Queue1, 1);
+    // QueueLevel1 = QueueDataStructure[1].queuelevel;
+    // // mem_write_atomic(&QueueLevel1, &customData.custom6, sizeof(QueueLevel1));
+    // mem_add64_imm(QueueLevel1_1, &customData.custom6);
+    // counter_debug += 1;
+    // mem_add64_imm(counter_debug, &customData.custom7);
 }
+
+    // uint64_t tmp_qlevel_1 = 0;
+    // uint64_t avg_qlevel_1 = 0;
+    // tmp_qlevel1 = QueueLevel_1.queuelevel;
+    // for (i=1; i<n; i++) {
+    // avg_qlevel_1 = (tmp_qlevel_1/i);
+    // return avg_qlevel_1;
+    // }
+    // mem_add64_imm(avg_qlevel_1, &customData_2.qlevel_1);
+    /*******-------------------------------------------------------------*****/
+
 
 int
 main(void)
@@ -266,14 +404,13 @@ main(void)
      */
     for (;;) {
         /* Receive a packet */
-
         pkt_hdr = receive_packet(&pkt_rxed, sizeof(pkt_rxed));
 
         /* Rewrite the packet */
-        //rewrite_packet(&pkt_rxed, pkt_hdr);
+        rewrite_packet(&pkt_rxed, pkt_hdr);
 
         /* Count the packet */
-        //count_packet(&pkt_rxed, pkt_hdr);
+        count_packet(&pkt_rxed, pkt_hdr);
 
         /* Do stats on the packet */
         //stats_packet(&pkt_rxed, pkt_hdr);
