@@ -34,6 +34,14 @@
 #include <nfp/mem_atomic.h>
 #include <nfp/mem_bulk.h>
 
+#include <net/ip.h>
+#include <net/udp.h>
+#include <nfp6000/nfp_nbi_tm.h>
+#include <nfp/tmq.h>
+#include <nfp/tm_config.h>
+// #include <nfp/mac_time.h>
+#include <nfp/me.h>
+
 /*
  * Mapping between channel and TM queue
  */
@@ -66,9 +74,12 @@ __volatile __export __emem uint32_t debug_idx;
 /* Counters */
 struct counters {
     uint64_t no_vlan;
-    uint64_t vlan_2;
-    uint64_t vlan_3;
-    uint64_t vlan_other;
+    uint64_t ip_packets;
+    uint64_t udp_packets;
+    uint32_t vlan_2;
+    uint32_t vlan_3;
+    uint32_t vlan_other;
+    uint32_t extra;
 };
 
 struct statistics {
@@ -78,11 +89,41 @@ struct statistics {
     uint64_t vlan_other;
 };
 
+// Add metadata structure to be used for debugging with nfp-rtsym
+struct CustomData {
+    uint8_t  custom1;
+    uint8_t  custom2;
+    uint16_t custom3;
+    uint32_t custom4;
+    uint64_t custom5;
+    uint64_t custom6;
+    uint64_t custom7;
+};
+
+__packed struct metadata { /*timestamp*/
+    uint64_t timestamp1;
+    uint64_t timestamp2;
+    uint64_t timestamp3;
+    uint64_t timestamp4;
+    uint64_t timestamp5;
+};
+
+struct Timestamp_Store {
+    uint64_t ts1;
+    uint64_t ts2;
+    uint64_t ts3;
+    uint64_t debug_value;
+};
+
 // __declspec(shared ctm) is one copy shared by all threads in an ME, in CTM
 // __declspec(shared export ctm) is one copy shared by all MEs in an island in CTM (CTM default scope for 'export' of island)
 // __declspec(shared export imem) is one copy shared by all MEs on the chip in IMU (IMU default scope for 'export' of global)
 __declspec(shared scope(island) export cls) struct statistics stats;
 __declspec(shared scope(global) export imem) struct counters counters;
+
+// Add one instance of the above defined metadata structure to imem memory
+__declspec(shared scope(global) export imem) struct CustomData customData;
+
 
 struct pkt_hdr {
     struct {
@@ -90,6 +131,9 @@ struct pkt_hdr {
         uint32_t mac_prepend;
     };
     struct eth_vlan_hdr pkt;
+    struct ip4_hdr ip_pkt;
+    struct udp_hdr udp_pkt;
+    struct metadata metadata_m;
 };
 
 struct pkt_rxed {
@@ -125,8 +169,7 @@ stats_packet( struct pkt_rxed *pkt_rxed,
 }
 
 __mem40 struct pkt_hdr *
-receive_packet( struct pkt_rxed *pkt_rxed,
-                size_t size )
+receive_packet( struct pkt_rxed *pkt_rxed, size_t size )
 {
     __xread struct pkt_rxed pkt_rxed_in;
     int island, pnum;
@@ -151,13 +194,20 @@ void
 rewrite_packet( struct pkt_rxed *pkt_rxed,
                 __mem40 struct pkt_hdr *pkt_hdr )
 {
-    int vlan;
+    uint8_t vlan = 0;
 
-    vlan = 0;
     if (pkt_rxed->pkt_hdr.pkt.tpid==0x8100) {
         vlan = pkt_rxed->pkt_hdr.pkt.tci & 0xfff;
-        if ((vlan==2) || (vlan==3)) {
-            pkt_hdr->pkt.tci = pkt_rxed->pkt_hdr.pkt.tci ^ 1;
+        // if ((vlan==2) || (vlan==3)) {
+        //     // pkt_hdr->pkt.tci = pkt_rxed->pkt_hdr.pkt.tci ^ 1;
+        //     pkt_hdr->pkt.tci = 0x202f;
+        // }
+        if (vlan==2) {
+            pkt_hdr->pkt.tci = pkt_hdr->pkt.tci & 0x1fff;			// Priority 0
+        } else if (vlan==3) {
+            pkt_hdr->pkt.tci = (pkt_hdr->pkt.tci & 0x1fff) | (1 << 13); 	// Priority 1
+        } else if (vlan==4) {
+            pkt_hdr->pkt.tci = (pkt_hdr->pkt.tci & 0x1fff) | (1 << 14); 	// Priority 2
         }
     }
 }
@@ -170,11 +220,12 @@ count_packet( struct pkt_rxed *pkt_rxed,
         mem_incr64(&counters.no_vlan);
     } else {
         if ((pkt_rxed->pkt_hdr.pkt.tci & 0xfff)==2) {
-            mem_incr64(&counters.vlan_2);
+            mem_incr32(&counters.vlan_2);
+            // mem_add32_imm(PORT_TO_CHANNEL(pkt_rxed->nbi_meta.port), &customData.custom1); // Add Port Number
         } else if ((pkt_rxed->pkt_hdr.pkt.tci & 0xfff)==3) {
-            mem_incr64(&counters.vlan_3);
+            mem_incr32(&counters.vlan_3);
         } else {
-            mem_incr64(&counters.vlan_other);
+            mem_incr32(&counters.vlan_other);
         }
     }
 }
@@ -188,6 +239,17 @@ send_packet( struct nbi_meta_catamaran *nbi_meta,
     __gpr struct pkt_ms_info msi;
     __mem40 char *pbuf;
     uint16_t q_dst = 0;
+    uint8_t channel_dst = 0;
+
+    uint32_t Queue0 = 0;
+    uint32_t Queue1 = 0;
+    uint32_t Queue2 = 24;
+    __xread struct nfp_nbi_tm_queue_status QueueDataStructure[3];
+    __xwrite uint64_t QueueLevel0;
+    __xwrite uint64_t QueueLevel1;
+    uint64_t QueueLevel0_0 = 0;
+    uint64_t QueueLevel1_1 = 0;
+    uint64_t counter_debug = 0;
 
     /* Write the MAC egress CMD and adjust offset and len accordingly */
     pkt_off = PKT_NBI_OFFSET + 2 * MAC_PREPEND_BYTES;
@@ -196,9 +258,36 @@ send_packet( struct nbi_meta_catamaran *nbi_meta,
     pbuf   = pkt_ctm_ptr40(island, pnum, 0);
     plen   = nbi_meta->pkt_info.len - MAC_PREPEND_BYTES;
 
+    channel_dst = nbi_meta->port;
+
+    /** Select 1 of the options below **/
+    /*******-------------------------------------------------------------*****/
+
     /* Set egress tm queue.
      * Set tm_que to mirror pkt to port on which in ingressed. */
-    q_dst  = PORT_TO_CHANNEL(nbi_meta->port);
+    // q_dst = PORT_TO_CHANNEL(channel_dst);
+    // q_dst = 0;
+
+    /*** Set egress queue to the other port ***/
+    q_dst = PORT_TO_CHANNEL(channel_dst) ? 0 : 128;
+
+    /*** Select egress queue/channel to the other port such that ping and arp etc. can flow. ***/
+    /** Ping and arp use the 4th queue of the channel, we don't know the reason yet **/
+    // if (channel_dst == 3 || channel_dst == 19) {
+    //     channel_dst = (channel_dst==19) ? 3 : 19;
+    // } else {
+    //     channel_dst = (channel_dst==16) ? 0 : 16;
+    // }
+    // q_dst = PORT_TO_CHANNEL(channel_dst);
+
+    // if ((pkt_hdr->pkt.tci & 0xfff)==2) {
+    //     q_dst = Queue0;
+    // } else if ((pkt_hdr->pkt.tci & 0xfff)==3) {
+    //     q_dst = Queue1;
+    // } else {
+    //     q_dst = Queue2;
+    // }
+    /*******-------------------------------------------------------------*****/
 
     pkt_mac_egress_cmd_write(pbuf, pkt_off, 1, 1); // Write data to make the packet MAC egress generate L3 and L4 checksums
 
