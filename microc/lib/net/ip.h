@@ -97,8 +97,9 @@
  * IPv4 header structure
  */
 __packed struct ip4_hdr {
-    uint8_t  ver:4;                     /** Version */
-    uint8_t  hl:4;                      /** Header length */
+    // uint8_t  ver:4;                     /** Version */
+    // uint8_t  hl:4;                      /** Header length */
+    uint8_t  hl;
     uint8_t  tos;                       /** Type of service */
     uint16_t len;                       /** Total length */
 
