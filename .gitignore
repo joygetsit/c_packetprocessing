@@ -6,3 +6,7 @@
 *.list
 *.obj
 *.map
+
+.idea/
+/apps/lab5/1
+

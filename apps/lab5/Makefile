@@ -20,6 +20,10 @@
 # Define src_dir FIRST - it is the directory that this makefile resides in
 # MUST OCCUR BEFORE ANY include's (which will change MAKEFILE_LIST)
 app_src_dir     := $(shell dirname $(realpath $(lastword $(MAKEFILE_LIST))))
+## Debug
+$(info $$app_src_dirr is [${app_src_dir}])
+$(info $$app_src_dirrr is [${MAKEFILE_LIST}])
+## Debug
 ROOT_SRC_DIR  ?= $(realpath $(app_src_dir)/../..)
 base_dir        := $(ROOT_SRC_DIR)
 
@@ -57,8 +61,9 @@ $(eval $(call micro_c.add_fw_libs,stats_obj,nfp std))
 $(eval $(call micro_c.compile_with_rtl,wire_obj,wire_main.c))
 $(eval $(call micro_c.add_fw_libs,wire_obj,nfp pkt std net))
 $(eval $(call micro_c.force_include,wire_obj,config))
-$(eval $(call fw.add_obj,wire,wire_obj,i32.me0 i32.me1 i32.me2 i32.me3 i32.me4 i32.me5 i32.me6 i32.me7 i32.me8 i32.me9 i32.me10 i32.me11))
-$(eval $(call fw.add_obj,wire,wire_obj,i33.me0 i33.me1 i33.me2 i33.me3 i33.me4 i33.me5 i33.me6 i33.me7 i33.me8 i33.me9 i33.me10 i33.me11))
+$(eval $(call fw.add_obj,wire,wire_obj,i32.me0))
+# $(eval $(call fw.add_obj,wire,wire_obj,i32.me0 i32.me1 i32.me2 i32.me3 i32.me4 i32.me5 i32.me6 i32.me7 i32.me8 i32.me9 i32.me10 i32.me11))
+# $(eval $(call fw.add_obj,wire,wire_obj,i33.me0 i33.me1 i33.me2 i33.me3 i33.me4 i33.me5 i33.me6 i33.me7 i33.me8 i33.me9 i33.me10 i33.me11))
 $(eval $(call fw.add_obj,wire,stats_obj,i34.me0))
 $(eval $(call fw.add_obj,wire,blm_obj,i48.me0))
 $(eval $(call fw.link_with_rtsyms,wire))
