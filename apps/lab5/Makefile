@@ -20,10 +20,6 @@
 # Define src_dir FIRST - it is the directory that this makefile resides in
 # MUST OCCUR BEFORE ANY include's (which will change MAKEFILE_LIST)
 app_src_dir     := $(shell dirname $(realpath $(lastword $(MAKEFILE_LIST))))
-## Debug
-$(info $$app_src_dirr is [${app_src_dir}])
-$(info $$app_src_dirrr is [${MAKEFILE_LIST}])
-## Debug
 ROOT_SRC_DIR  ?= $(realpath $(app_src_dir)/../..)
 base_dir        := $(ROOT_SRC_DIR)
 
