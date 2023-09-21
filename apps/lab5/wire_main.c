@@ -39,8 +39,8 @@
 #include <nfp6000/nfp_nbi_tm.h>
 #include <nfp/tmq.h>
 #include <nfp/tm_config.h>
-// #include <nfp/mac_time.h>
 #include <nfp/me.h>
+// #include <nfp/mac_time.h>
 
 /*
  * Mapping between channel and TM queue
