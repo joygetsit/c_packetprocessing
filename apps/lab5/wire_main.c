@@ -154,9 +154,9 @@ stats_packet( struct pkt_rxed *pkt_rxed,
     if (pkt_rxed->pkt_hdr.pkt.tpid!=0x8100) {
         address = (uint32_t) &(stats.no_vlan);
     } else {
-        if ((pkt_rxed->pkt_hdr.pkt.tci & 0xfff)==2) {
+        if ((pkt_rxed->pkt_hdr.pkt.tci & 0xfff)==10) {
             address = (uint32_t) &(stats.vlan_2);
-        } else if ((pkt_rxed->pkt_hdr.pkt.tci & 0xfff)==3) {
+        } else if ((pkt_rxed->pkt_hdr.pkt.tci & 0xfff)==11) {
             address = (uint32_t) &(stats.vlan_3);
         } else {
             address = (uint32_t) &(stats.vlan_other);
@@ -198,16 +198,16 @@ rewrite_packet( struct pkt_rxed *pkt_rxed,
 
     if (pkt_rxed->pkt_hdr.pkt.tpid==0x8100) {
         vlan = pkt_rxed->pkt_hdr.pkt.tci & 0xfff;
-        // if ((vlan==2) || (vlan==3)) {
+        // if ((vlan==10) || (vlan==11)) {
         //     // pkt_hdr->pkt.tci = pkt_rxed->pkt_hdr.pkt.tci ^ 1;
         //     pkt_hdr->pkt.tci = 0x202f;
         // }
-        if (vlan==2) {
-            pkt_hdr->pkt.tci = pkt_hdr->pkt.tci & 0x1fff;			// Priority 0
-        } else if (vlan==3) {
-            pkt_hdr->pkt.tci = (pkt_hdr->pkt.tci & 0x1fff) | (1 << 13); 	// Priority 1
+        if (vlan==10) {
+            pkt_hdr->pkt.tci = pkt_hdr->pkt.tci & 0x1fff;                   // Priority 0
+        } else if (vlan==11) {
+            pkt_hdr->pkt.tci = (pkt_hdr->pkt.tci & 0x1fff) | (1 << 13);     // Priority 1
         } else if (vlan==4) {
-            pkt_hdr->pkt.tci = (pkt_hdr->pkt.tci & 0x1fff) | (1 << 14); 	// Priority 2
+            pkt_hdr->pkt.tci = (pkt_hdr->pkt.tci & 0x1fff) | (1 << 14);     // Priority 2
         }
     }
 }
@@ -219,10 +219,10 @@ count_packet( struct pkt_rxed *pkt_rxed,
     if (pkt_rxed->pkt_hdr.pkt.tpid!=0x8100) {
         mem_incr64(&counters.no_vlan);
     } else {
-        if ((pkt_rxed->pkt_hdr.pkt.tci & 0xfff)==2) {
+        if ((pkt_rxed->pkt_hdr.pkt.tci & 0xfff)==10) {
             mem_incr32(&counters.vlan_2);
             // mem_add32_imm(PORT_TO_CHANNEL(pkt_rxed->nbi_meta.port), &customData.custom1); // Add Port Number
-        } else if ((pkt_rxed->pkt_hdr.pkt.tci & 0xfff)==3) {
+        } else if ((pkt_rxed->pkt_hdr.pkt.tci & 0xfff)==11) {
             mem_incr32(&counters.vlan_3);
         } else {
             mem_incr32(&counters.vlan_other);
@@ -280,9 +280,9 @@ send_packet( struct nbi_meta_catamaran *nbi_meta,
     // }
     // q_dst = PORT_TO_CHANNEL(channel_dst);
 
-    // if ((pkt_hdr->pkt.tci & 0xfff)==2) {
+    // if ((pkt_hdr->pkt.tci & 0xfff)==10) {
     //     q_dst = Queue0;
-    // } else if ((pkt_hdr->pkt.tci & 0xfff)==3) {
+    // } else if ((pkt_hdr->pkt.tci & 0xfff)==11) {
     //     q_dst = Queue1;
     // } else {
     //     q_dst = Queue2;
